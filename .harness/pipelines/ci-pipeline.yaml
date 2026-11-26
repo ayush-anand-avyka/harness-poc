@@ -1,0 +1,250 @@
+pipeline:
+  name: harness-poc-ci
+  identifier: harness_poc_ci
+  projectIdentifier: harness_poc
+  orgIdentifier: default
+  tags:
+    purpose: poc
+    domain: ci
+
+  properties:
+    ci:
+      codebase:
+        connectorRef: account.github_connector
+        repoName: harness-poc-app
+        build: <+input>
+
+  stages:
+    # ─── Stage 1: Build & Lint ──────────────────────────────────────────────
+    - stage:
+        name: Build
+        identifier: Build
+        type: CI
+        spec:
+          cloneCodebase: true
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: account.k8s_connector
+              namespace: harness-builds
+              automountServiceAccountToken: true
+              nodeSelector: {}
+              os: Linux
+          execution:
+            steps:
+              - step:
+                  type: RestoreCacheV2
+                  name: Restore npm cache
+                  identifier: restore_npm_cache
+                  spec:
+                    key: npm-cache-{{ checksum "package-lock.json" }}
+                    sources:
+                      - type: Harness
+                    failIfKeyNotFound: false
+
+              - step:
+                  type: Run
+                  name: Install dependencies
+                  identifier: install_deps
+                  spec:
+                    connectorRef: account.har_connector
+                    image: node:20-alpine
+                    shell: Sh
+                    command: npm ci
+                    envVariables:
+                      NPM_CONFIG_CACHE: /harness/npm-cache
+
+              - step:
+                  type: Run
+                  name: Lint
+                  identifier: lint
+                  spec:
+                    connectorRef: account.har_connector
+                    image: node:20-alpine
+                    shell: Sh
+                    command: npm run lint
+
+              - step:
+                  type: SaveCacheV2
+                  name: Save npm cache
+                  identifier: save_npm_cache
+                  spec:
+                    key: npm-cache-{{ checksum "package-lock.json" }}
+                    sourcePaths:
+                      - /harness/npm-cache
+                    target:
+                      type: Harness
+
+    # ─── Stage 2: Test (Matrix on Node 18 + 20) ─────────────────────────────
+    - stage:
+        name: Test
+        identifier: Test
+        type: CI
+        spec:
+          cloneCodebase: true
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: account.k8s_connector
+              namespace: harness-builds
+              os: Linux
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Install and Test
+                  identifier: install_and_test
+                  spec:
+                    connectorRef: account.har_connector
+                    # Matrix node version injected here
+                    image: node:<+matrix.nodeVersion>-alpine
+                    shell: Sh
+                    command: |
+                      npm ci
+                      npm run test:ci
+                    reports:
+                      type: JUnit
+                      spec:
+                        paths:
+                          - junit.xml
+                    envVariables:
+                      JEST_JUNIT_OUTPUT_FILE: junit.xml
+        strategy:
+          matrix:
+            nodeVersion:
+              - "18"
+              - "20"
+          maxConcurrency: 2
+
+    # ─── Stage 3: STO Security Scan ─────────────────────────────────────────
+    - stage:
+        name: Security Scan
+        identifier: Security_Scan
+        type: SecurityTests
+        spec:
+          cloneCodebase: true
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: account.k8s_connector
+              namespace: harness-builds
+              os: Linux
+          execution:
+            steps:
+              - parallel:
+                  - step:
+                      type: Semgrep
+                      name: SAST - Semgrep
+                      identifier: semgrep_scan
+                      spec:
+                        mode: orchestration
+                        config: default
+                        target:
+                          name: harness-poc-app
+                          type: repository
+                          variant: <+codebase.branch>
+                        advanced:
+                          log:
+                            level: info
+                          fail_on_severity: critical
+
+                  - step:
+                      type: OsvScanner
+                      name: SCA - OSV Scanner
+                      identifier: osv_scan
+                      spec:
+                        mode: orchestration
+                        config: default
+                        target:
+                          name: harness-poc-app
+                          type: repository
+                          variant: <+codebase.branch>
+                        advanced:
+                          log:
+                            level: info
+                          fail_on_severity: critical
+
+    # ─── Stage 4: Build & Push to HAR ───────────────────────────────────────
+    - stage:
+        name: Push to HAR
+        identifier: Push_to_HAR
+        type: CI
+        spec:
+          cloneCodebase: true
+          infrastructure:
+            type: KubernetesDirect
+            spec:
+              connectorRef: account.k8s_connector
+              namespace: harness-builds
+              os: Linux
+          execution:
+            steps:
+              - step:
+                  type: BuildAndPushHarRegistry
+                  name: Build and Push
+                  identifier: build_and_push_har
+                  spec:
+                    connectorRef: account.har_connector
+                    # HAR registry path: <account>/avyka-poc-registry/<image>
+                    repo: avyka-poc-registry/harness-poc-app
+                    tags:
+                      - <+pipeline.sequenceId>
+                      - latest
+                    dockerfile: Dockerfile
+                    context: .
+                    buildArgs:
+                      BUILD_NUMBER: <+pipeline.sequenceId>
+                    labels:
+                      build-number: <+pipeline.sequenceId>
+                      git-commit: <+codebase.commitSha>
+                      git-branch: <+codebase.branch>
+                    # Cache layers via HAR
+                    cacheFrom:
+                      - avyka-poc-registry/harness-poc-app:latest
+                    cacheTo: inline
+
+              - step:
+                  type: Run
+                  name: Generate SBOM
+                  identifier: generate_sbom
+                  spec:
+                    connectorRef: account.har_connector
+                    image: anchore/syft:latest
+                    shell: Sh
+                    command: |
+                      syft avyka-poc-registry/harness-poc-app:<+pipeline.sequenceId> \
+                        -o spdx-json=sbom.json
+                      echo "SBOM generated for build <+pipeline.sequenceId>"
+                    envVariables:
+                      SYFT_REGISTRY_AUTH_AUTHORITY: <+variable.har_registry_host>
+                      SYFT_REGISTRY_AUTH_USERNAME: <+secrets.getValue("har_username")>
+                      SYFT_REGISTRY_AUTH_PASSWORD: <+secrets.getValue("har_token")>
+
+              - step:
+                  type: AquaTrivy
+                  name: Container Scan
+                  identifier: trivy_container_scan
+                  spec:
+                    mode: orchestration
+                    config: default
+                    target:
+                      name: harness-poc-app
+                      type: container
+                      variant: <+pipeline.sequenceId>
+                    image:
+                      type: docker_v2
+                      name: avyka-poc-registry/harness-poc-app
+                      tag: <+pipeline.sequenceId>
+                      access_id: <+secrets.getValue("har_username")>
+                      access_token: <+secrets.getValue("har_token")>
+                      domain: <+variable.har_registry_host>
+                    advanced:
+                      log:
+                        level: info
+                      fail_on_severity: critical
+
+  variables:
+    - name: har_registry_host
+      type: String
+      description: Harness Artifact Registry hostname
+      value: <+input>

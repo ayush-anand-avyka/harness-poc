@@ -1,0 +1,225 @@
+pipeline:
+  name: harness-poc-cd
+  identifier: harness_poc_cd
+  projectIdentifier: harness_poc
+  orgIdentifier: default
+  tags:
+    purpose: poc
+    domain: cd
+
+  stages:
+    # ─── Stage 1: Deploy to Dev ──────────────────────────────────────────────
+    - stage:
+        name: Deploy Dev
+        identifier: Deploy_Dev
+        type: Deployment
+        spec:
+          deploymentType: Kubernetes
+          service:
+            serviceRef: harness_poc_app
+            serviceInputs:
+              serviceDefinition:
+                type: Kubernetes
+                spec:
+                  artifacts:
+                    primary:
+                      primaryArtifactRef: har_image
+                      sources:
+                        - identifier: har_image
+                          spec:
+                            tag: <+trigger.artifact.build.number>
+          environment:
+            environmentRef: dev
+            deployToAll: false
+            infrastructureDefinitions:
+              - identifier: dev_k8s
+          execution:
+            steps:
+              - step:
+                  type: K8sRollingDeploy
+                  name: Rolling Deploy
+                  identifier: rolling_deploy_dev
+                  spec:
+                    skipDryRun: false
+                    pruningEnabled: true
+            rollbackSteps:
+              - step:
+                  type: K8sRollingRollback
+                  name: Rollback
+                  identifier: rollback_dev
+                  spec: {}
+
+    # ─── Stage 2: Deploy to Staging (Canary) ─────────────────────────────────
+    - stage:
+        name: Deploy Staging
+        identifier: Deploy_Staging
+        type: Deployment
+        spec:
+          deploymentType: Kubernetes
+          service:
+            useFromStage:
+              stage: Deploy_Dev
+          environment:
+            environmentRef: staging
+            deployToAll: false
+            infrastructureDefinitions:
+              - identifier: staging_k8s
+          execution:
+            steps:
+              - step:
+                  type: HarnessApproval
+                  name: Approve Staging Deploy
+                  identifier: approve_staging
+                  spec:
+                    approvalMessage: |
+                      Approve deployment of build <+artifacts.primary.tag> to Staging.
+                      CI Pipeline: <+pipeline.stages.Deploy_Dev.spec.execution.steps.rolling_deploy_dev.output.releaseName>
+                    includePipelineExecutionHistory: true
+                    approvers:
+                      minimumCount: 1
+                      disallowPipelineExecutor: false
+                      userGroups:
+                        - account.platform_team
+                  timeout: 1d
+
+              - stepGroup:
+                  name: Canary Deployment
+                  identifier: canary_deployment
+                  steps:
+                    - step:
+                        type: K8sCanaryDeploy
+                        name: Canary 20%
+                        identifier: canary_20
+                        spec:
+                          instanceSelection:
+                            type: Percentage
+                            spec:
+                              percentage: 20
+                          skipDryRun: false
+
+                    - step:
+                        type: HarnessApproval
+                        name: Approve Canary Promotion
+                        identifier: approve_canary
+                        spec:
+                          approvalMessage: |
+                            Canary at 20% looks good?
+                            Check metrics before promoting to 100%.
+                          approvers:
+                            minimumCount: 1
+                            userGroups:
+                              - account.platform_team
+                        timeout: 2h
+
+                    - step:
+                        type: K8sCanaryDelete
+                        name: Delete Canary
+                        identifier: delete_canary
+                        spec: {}
+
+                    - step:
+                        type: K8sRollingDeploy
+                        name: Full Rollout
+                        identifier: full_rollout_staging
+                        spec:
+                          skipDryRun: false
+                          pruningEnabled: true
+
+            rollbackSteps:
+              - step:
+                  type: K8sCanaryDelete
+                  name: Delete Canary on Rollback
+                  identifier: delete_canary_rollback
+                  spec: {}
+              - step:
+                  type: K8sRollingRollback
+                  name: Rollback Staging
+                  identifier: rollback_staging
+                  spec: {}
+
+    # ─── Stage 3: Deploy to Prod ─────────────────────────────────────────────
+    - stage:
+        name: Deploy Prod
+        identifier: Deploy_Prod
+        type: Deployment
+        # Only deploy if no critical STO findings (variable passed from CI)
+        when:
+          condition: <+pipeline.variables.sto_critical_count> == "0"
+        spec:
+          deploymentType: Kubernetes
+          service:
+            useFromStage:
+              stage: Deploy_Dev
+          environment:
+            environmentRef: prod
+            deployToAll: false
+            infrastructureDefinitions:
+              - identifier: prod_k8s
+          execution:
+            steps:
+              - step:
+                  type: HarnessApproval
+                  name: Prod Deploy Approval
+                  identifier: approve_prod
+                  spec:
+                    approvalMessage: |
+                      PRODUCTION deployment of build <+artifacts.primary.tag>.
+                      STO Critical findings: <+pipeline.variables.sto_critical_count>
+                      Staging deployment: PASSED
+                      Confirm to proceed.
+                    includePipelineExecutionHistory: true
+                    approvers:
+                      minimumCount: 2
+                      disallowPipelineExecutor: true
+                      userGroups:
+                        - account.platform_team
+                        - account.security_team
+                    approverInputs:
+                      - name: change_ticket
+                        defaultValue: ""
+                  timeout: 4h
+
+              - step:
+                  type: K8sBlueGreenDeploy
+                  name: Blue-Green Deploy
+                  identifier: bg_deploy_prod
+                  spec:
+                    skipDryRun: false
+                    pruningEnabled: true
+
+              - step:
+                  type: HarnessApproval
+                  name: Approve Traffic Switch
+                  identifier: approve_traffic_switch
+                  spec:
+                    approvalMessage: |
+                      Blue-Green deploy complete. Switch traffic to new version?
+                    approvers:
+                      minimumCount: 1
+                      userGroups:
+                        - account.platform_team
+                  timeout: 1h
+
+              - step:
+                  type: K8sSwapServiceSelectors
+                  name: Switch Traffic
+                  identifier: switch_traffic
+                  spec: {}
+
+            rollbackSteps:
+              - step:
+                  type: K8sSwapServiceSelectors
+                  name: Rollback Traffic
+                  identifier: rollback_traffic
+                  spec: {}
+              - step:
+                  type: K8sBGSwapServices
+                  name: Rollback BG
+                  identifier: rollback_bg
+                  spec: {}
+
+  variables:
+    - name: sto_critical_count
+      type: String
+      description: Count of critical STO findings from CI pipeline. Must be 0 for prod.
+      value: <+input>

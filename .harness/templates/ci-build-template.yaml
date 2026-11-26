@@ -1,0 +1,73 @@
+template:
+  name: Node Build and Test
+  identifier: node_build_test
+  versionLabel: "1.0.0"
+  type: Stage
+  projectIdentifier: ""
+  orgIdentifier: ""
+  # Stored at ACCOUNT scope - reusable across all projects
+  tags:
+    type: ci-template
+    language: nodejs
+
+  spec:
+    type: CI
+    spec:
+      cloneCodebase: true
+      infrastructure:
+        type: KubernetesDirect
+        spec:
+          connectorRef: <+input>
+          namespace: harness-builds
+          os: Linux
+      execution:
+        steps:
+          - step:
+              type: RestoreCacheV2
+              name: Restore Cache
+              identifier: restore_cache
+              spec:
+                key: <+input>
+                sources:
+                  - type: Harness
+                failIfKeyNotFound: false
+
+          - step:
+              type: Run
+              name: Install Dependencies
+              identifier: install_deps
+              spec:
+                connectorRef: account.har_connector
+                image: node:<+input>-alpine
+                shell: Sh
+                command: npm ci
+                envVariables:
+                  NPM_CONFIG_CACHE: /harness/npm-cache
+
+          - step:
+              type: Run
+              name: Run Tests
+              identifier: run_tests
+              spec:
+                connectorRef: account.har_connector
+                image: node:<+input>-alpine
+                shell: Sh
+                command: npm run test:ci
+                reports:
+                  type: JUnit
+                  spec:
+                    paths:
+                      - junit.xml
+                envVariables:
+                  JEST_JUNIT_OUTPUT_FILE: junit.xml
+
+          - step:
+              type: SaveCacheV2
+              name: Save Cache
+              identifier: save_cache
+              spec:
+                key: <+input>
+                sourcePaths:
+                  - /harness/npm-cache
+                target:
+                  type: Harness

@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: harness-poc-app
+  labels:
+    app: harness-poc-app
+    managed-by: harness
+spec:
+  selector:
+    app: harness-poc-app
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3000
+      protocol: TCP
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: harness-poc-app
+  labels:
+    app: harness-poc-app
