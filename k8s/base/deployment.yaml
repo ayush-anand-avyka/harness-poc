@@ -31,7 +31,6 @@ spec:
         fsGroup: 1001
       containers:
         - name: harness-poc-app
-          # Image tag injected by Harness CD at runtime via <+artifact.tag>
           image: HARNESS_REGISTRY_PLACEHOLDER/harness-poc-app:latest
           imagePullPolicy: Always
           ports:

@@ -64,6 +64,15 @@ describe('API /items', () => {
   });
 });
 
+describe('UI static routes', () => {
+  test('GET / serves the POC dashboard HTML', async () => {
+    const res = await request(app).get('/');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toMatch(/text\/html/);
+    expect(res.text).toContain('Cloud-Native POC Dashboard');
+  });
+});
+
 describe('API /info', () => {
   test('GET /api/info returns app metadata', async () => {
     const res = await request(app).get('/api/info');

@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Harness POC App — Cloud-Native Learning Dashboard</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="bg-grid" aria-hidden="true"></div>
+
+  <header class="topbar">
+    <div class="container topbar-inner">
+      <div class="brand">
+        <div class="brand-logo" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+            <polyline points="2 17 12 22 22 17"></polyline>
+            <polyline points="2 12 12 17 22 12"></polyline>
+          </svg>
+        </div>
+        <div>
+          <div class="brand-title-row">
+            <span class="brand-name">harness-poc-app</span>
+            <span class="badge badge-accent">Learning &amp; POC</span>
+          </div>
+          <p class="brand-sub">Reference Node.js Service for Harness CI/CD, GitOps &amp; STO</p>
+        </div>
+      </div>
+
+      <div class="topbar-actions">
+        <div id="health-pill" class="status-pill status-loading">
+          <span class="pulse-dot"></span>
+          <span id="health-pill-text">Checking health...</span>
+        </div>
+        <button id="theme-toggle" class="btn btn-ghost btn-icon" type="button" title="Toggle color theme" aria-label="Toggle color theme">
+          <span id="theme-icon">☀️</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="container main-content">
+    <!-- Hero / Pipeline Overview -->
+    <section class="hero-card">
+      <div class="hero-text">
+        <span class="eyebrow">DEPLOYMENT CONTROL PLANE</span>
+        <h1>Cloud-Native POC Dashboard</h1>
+        <p>
+          Inspect live Kubernetes environment metadata, verify container health probes,
+          and interact with the in-memory REST API—built for hands-on Harness pipeline learning.
+        </p>
+      </div>
+      <div class="pipeline-flow" aria-label="CI/CD Pipeline Stages">
+        <div class="stage">
+          <span class="stage-num">01</span>
+          <span class="stage-name">Code &amp; Jest</span>
+        </div>
+        <span class="stage-arrow" aria-hidden="true">→</span>
+        <div class="stage">
+          <span class="stage-num">02</span>
+          <span class="stage-name">Docker Build</span>
+        </div>
+        <span class="stage-arrow" aria-hidden="true">→</span>
+        <div class="stage">
+          <span class="stage-num">03</span>
+          <span class="stage-name">Harness STO</span>
+        </div>
+        <span class="stage-arrow" aria-hidden="true">→</span>
+        <div class="stage stage-active">
+          <span class="stage-num">04</span>
+          <span class="stage-name">K8s Deploy</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Environment & Health Telemetry -->
+    <section class="section">
+      <div class="section-header">
+        <div>
+          <h2>Runtime &amp; Deployment Telemetry</h2>
+          <p class="section-sub">Live configuration injected via Kubernetes ConfigMap &amp; container environment</p>
+        </div>
+        <button id="refresh-telemetry" class="btn btn-secondary" type="button">
+          ↻ Refresh Probes
+        </button>
+      </div>
+
+      <div class="telemetry-grid">
+        <article class="metric-card">
+          <span class="metric-label">App Version</span>
+          <strong id="meta-version" class="metric-value mono">--</strong>
+          <span class="metric-hint">APP_VERSION</span>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Environment</span>
+          <strong id="meta-env" class="metric-value mono">--</strong>
+          <span class="metric-hint">NODE_ENV</span>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Deploy Region</span>
+          <strong id="meta-region" class="metric-value mono">--</strong>
+          <span class="metric-hint">DEPLOY_REGION</span>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Build Number</span>
+          <strong id="meta-build" class="metric-value mono">--</strong>
+          <span class="metric-hint">BUILD_NUMBER</span>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">Process Uptime</span>
+          <strong id="meta-uptime" class="metric-value mono">--</strong>
+          <span class="metric-hint">/health</span>
+        </article>
+        <article class="metric-card">
+          <span class="metric-label">K8s Probes</span>
+          <div class="probe-badges">
+            <span id="probe-ready" class="probe-badge">Ready: --</span>
+            <span id="probe-live" class="probe-badge">Live: --</span>
+          </div>
+          <span class="metric-hint">/health/ready &amp; /health/live</span>
+        </article>
+      </div>
+    </section>
+
+    <!-- Two-Column Workspace: Items Manager + Live API Inspector -->
+    <section class="workspace-grid">
+      <!-- Items Manager -->
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>Items Inventory <span id="items-count" class="count-pill">0</span></h2>
+            <p class="section-sub">Backed by <code>GET /api/items</code> and <code>POST /api/items</code></p>
+          </div>
+        </div>
+
+        <form id="add-item-form" class="add-form">
+          <input
+            id="item-name"
+            type="text"
+            placeholder="New item name (e.g. Canary Service)"
+            required
+            autocomplete="off"
+          />
+          <select id="item-category" aria-label="Item category">
+            <option value="alpha">alpha</option>
+            <option value="beta">beta</option>
+            <option value="gamma">gamma</option>
+          </select>
+          <button type="submit" class="btn btn-primary">+ Add Item</button>
+        </form>
+        <div id="form-feedback" class="form-feedback" role="status" aria-live="polite"></div>
+
+        <div class="filter-bar">
+          <div class="filter-group">
+            <label for="filter-category">Category</label>
+            <select id="filter-category">
+              <option value="">All categories</option>
+              <option value="alpha">alpha</option>
+              <option value="beta">beta</option>
+              <option value="gamma">gamma</option>
+            </select>
+          </div>
+          <div class="filter-group">
+            <label for="filter-active">Status</label>
+            <select id="filter-active">
+              <option value="">All statuses</option>
+              <option value="true">Active only</option>
+              <option value="false">Inactive only</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="items-list" class="items-list">
+          <div class="empty-state">Loading items...</div>
+        </div>
+      </div>
+
+      <!-- Live Endpoint Inspector -->
+      <div class="panel">
+        <div class="panel-header">
+          <div>
+            <h2>Live API Inspector</h2>
+            <p class="section-sub">Click any endpoint to test it directly against this pod</p>
+          </div>
+        </div>
+
+        <div class="endpoint-chips">
+          <button type="button" class="endpoint-chip active" data-endpoint="/api/info">
+            <span class="method-tag">GET</span> /api/info
+          </button>
+          <button type="button" class="endpoint-chip" data-endpoint="/health">
+            <span class="method-tag">GET</span> /health
+          </button>
+          <button type="button" class="endpoint-chip" data-endpoint="/health/ready">
+            <span class="method-tag">GET</span> /health/ready
+          </button>
+          <button type="button" class="endpoint-chip" data-endpoint="/health/live">
+            <span class="method-tag">GET</span> /health/live
+          </button>
+          <button type="button" class="endpoint-chip" data-endpoint="/api/items">
+            <span class="method-tag">GET</span> /api/items
+          </button>
+        </div>
+
+        <div class="inspector-box">
+          <div class="inspector-meta">
+            <span id="inspector-url" class="mono">GET /api/info</span>
+            <div class="inspector-stats">
+              <span id="inspector-status" class="status-code">--</span>
+              <span id="inspector-latency" class="mono latency-text">-- ms</span>
+            </div>
+          </div>
+          <pre id="inspector-output" class="inspector-output">Select an endpoint above to inspect its live JSON response...</pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="container footer-inner">
+      <span>harness-poc-app • Node.js + Express • Non-root Alpine Container</span>
+      <span>Built for Harness CI/CD &amp; Kubernetes POC</span>
+    </div>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
